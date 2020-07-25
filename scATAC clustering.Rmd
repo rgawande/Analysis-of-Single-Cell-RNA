@@ -1,0 +1,103 @@
+---
+title: "ML in Bio final exam"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# scATAC-seq Data
+```{r, echo=TRUE}
+library(Seurat)
+library(dplyr)
+library(cowplot)
+```
+### Reading the Data
+The following code is referred from: https://scrnaseq-course.cog.sanger.ac.uk/website/index.html
+```{r, echo=TRUE}
+atac_seq = read.table(gzfile("GSE126074_CellLineMixture_SNAREseq_chromatin_counts.tsv.gz"))
+atac_seurat_mat = as.matrix(data.frame(atac_seq))
+```
+
+```{r, echo=TRUE}
+atac_seurat <- CreateSeuratObject(counts = atac_seurat_mat, min.cells = 3, min.features  = 200, project = "scATAC", assay = "ATAC")
+```
+### Adding meta data to the suerat object
+```{r}
+mito.genes <- grep(pattern = "^MT-", x = rownames(atac_seurat@assays[["ATAC"]]), value = TRUE)
+percent.mito <- Matrix::colSums(atac_seurat@assays[["ATAC"]][mito.genes, ])/Matrix::colSums(atac_seurat@assays[["ATAC"]])
+atac_seurat <- AddMetaData(object = atac_seurat, metadata = percent.mito, col.name = "percent.mito")
+```
+### Plotting Features of the scATAC-seq data
+```{r, echo=TRUE}
+FeatureScatter(object = atac_seurat, feature1 = "nCount_ATAC", feature2 = "percent.mito")
+```
+
+
+```{r, echo=TRUE}
+FeatureScatter(object = atac_seurat, feature1 = "nCount_ATAC", feature2 = "nFeature_ATAC")
+```
+### Pre-process the data
+```{r, echo=TRUE}
+atac_seurat <- subset(x = atac_seurat, subset = nFeature_ATAC > 200 & nFeature_ATAC < 2500 & percent.mito >  -Inf & percent.mito < 0.05 )
+
+```
+
+```{r}
+atac_seurat <- NormalizeData(object = atac_seurat, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+atac_seurat <- FindVariableFeatures(object = atac_seurat, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5, nfeatures = 2000)
+```
+### Displaying the data
+```{r}
+head(x = HVFInfo(object = atac_seurat))
+```
+
+### Performing Principle Component Analysis (PCA)
+```{r}
+atac_seurat <- ScaleData(object = atac_seurat, vars.to.regress = c("nCounts_ATAC", "percent.mito"))
+```
+
+```{r}
+atac_seurat <- RunPCA(object = atac_seurat,  npcs = 30, verbose = FALSE)
+```
+
+
+```{r}
+atac_seurat <- JackStraw(object = atac_seurat, reduction = "pca", dims = 20, num.replicate = 100,  prop.freq = 0.1, verbose = FALSE)
+```
+
+```{r}
+atac_seurat <- ScoreJackStraw(object = atac_seurat, dims = 1:20, reduction = "pca")
+```
+### JackStraw analysis
+```{r}
+JackStrawPlot(object = atac_seurat, dims = 1:20, reduction = "pca")
+
+```
+### Elbow analysis of clusters
+```{r}
+ElbowPlot(object = atac_seurat)
+
+```
+
+### Clustering
+
+```{r}
+atac_seurat <- FindNeighbors(atac_seurat, reduction = "pca", dims = 1:20)
+
+```
+
+
+```{r}
+atac_seurat <- FindClusters(atac_seurat, resolution = 0.5, algorithm = 1)
+
+```
+
+
+
+```{r}
+atac_seurat <- RunUMAP(atac_seurat, reduction = "pca", dims = 1:20)
+DimPlot(atac_seurat, reduction = "umap", split.by = "seurat_clusters")
+```

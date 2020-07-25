@@ -1,0 +1,117 @@
+---
+title: "ML in Bio final exam"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# scRNA-seq Data
+```{r, echo=TRUE}
+library(Seurat)
+library(dplyr)
+library(cowplot)
+```
+
+### Reading the Data
+The following code is referred from: https://scrnaseq-course.cog.sanger.ac.uk/website/index.html
+```{r, echo=TRUE}
+rna_seq = read.table(gzfile("GSE126074_CellLineMixture_SNAREseq_cDNA_counts.tsv.gz"))
+rna_mat = as.matrix(data.frame(rna_seq))
+```
+
+```{r, echo=TRUE}
+rna_seurat <- CreateSeuratObject(counts = rna_mat, min.cells = 3, min.features  = 200, project = "scRNA", assay = "RNA")
+```
+### Adding meta data to the suerat object
+```{r}
+mito.genes <- grep(pattern = "^MT-", x = rownames(rna_seurat@assays[["RNA"]]), value = TRUE)
+percent.mito <- Matrix::colSums(rna_seurat@assays[["RNA"]][mito.genes, ])/Matrix::colSums(rna_seurat@assays[["RNA"]])
+rna_seurat <- AddMetaData(object = rna_seurat, metadata = percent.mito, col.name = "percent.mito")
+```
+### Plotting Features of the scRNA-seq data
+```{r, echo=TRUE}
+FeatureScatter(object = rna_seurat, feature1 = "nCount_RNA", feature2 = "percent.mito")
+```
+
+
+```{r, echo=TRUE}
+FeatureScatter(object = rna_seurat, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+```
+### Pre-process the data
+```{r, echo=TRUE}
+rna_seurat <- subset(x = rna_seurat, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mito >  -Inf & percent.mito < 0.05 )
+
+```
+
+```{r}
+rna_seurat <- NormalizeData(object = rna_seurat, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+```{r}
+rna_seurat <- FindVariableFeatures(object = rna_seurat, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5, nfeatures = 2000)
+```
+### Displaying the data
+```{r}
+head(x = HVFInfo(object = rna_seurat))
+```
+
+### Performing Principle Component Analysis (PCA)
+```{r}
+rna_seurat <- ScaleData(object = rna_seurat, vars.to.regress = c("nCounts_RNA", "percent.mito"))
+```
+
+```{r}
+rna_seurat <- RunPCA(object = rna_seurat,  npcs = 30, verbose = FALSE)
+```
+
+
+```{r}
+rna_seurat <- JackStraw(object = rna_seurat, reduction = "pca", dims = 20, num.replicate = 100,  prop.freq = 0.1, verbose = FALSE)
+```
+
+```{r}
+rna_seurat <- ScoreJackStraw(object = rna_seurat, dims = 1:20, reduction = "pca")
+```
+### JackStraw analysis
+```{r}
+JackStrawPlot(object = rna_seurat, dims = 1:20, reduction = "pca")
+
+```
+### Elbow analysis of clusters
+```{r}
+ElbowPlot(object = rna_seurat)
+
+```
+
+### Clustering
+
+```{r}
+rna_seurat <- FindNeighbors(rna_seurat, reduction = "pca", dims = 1:20)
+
+```
+
+
+```{r}
+rna_seurat <- FindClusters(rna_seurat, resolution = 0.5, algorithm = 1)
+
+```
+
+```{r}
+rna_seurat <- RunTSNE(object = rna_seurat, dims.use = 1:10, do.fast = TRUE)
+
+```
+
+
+```{r}
+DimPlot(object = rna_seurat, reduction = "tsne")
+
+```
+
+
+```{r}
+rna_seurat <- RunUMAP(rna_seurat, reduction = "pca", dims = 1:20)
+DimPlot(rna_seurat, reduction = "umap", split.by = "seurat_clusters")
+```
+
+

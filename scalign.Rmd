@@ -1,0 +1,153 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+The Following code is referred from: https://rdrr.io/bioc/scAlign/f/vignettes/scAlign.Rmd
+
+```{r}
+library(scAlign)
+library(Seurat)
+library(SingleCellExperiment)
+library(gridExtra)
+library(PMA)
+```
+
+```{r}
+rna_seq = read.table(gzfile("GSE126074_CellLineMixture_SNAREseq_cDNA_counts.tsv.gz"))
+rna_mat = as.matrix(data.frame(rna_seq))
+
+chromatin_seq = read.table(gzfile("GSE126074_CellLineMixture_SNAREseq_chromatin_counts.tsv.gz"))
+chromatin_mat = as.matrix(data.frame(chromatin_seq))
+
+
+rna_mat=t(rna_mat)
+chromatin_mat=t(chromatin_mat)
+```
+
+```{r}
+rna_seurat <- CreateSeuratObject(counts = rna_mat, min.cells = 3, min.features  = 200)
+
+chromatin_seurat <- CreateSeuratObject(counts = chromatin_mat, min.cells = 3, min.features  = 200)
+
+mito.rnagenes <- grep(pattern = "^MT-", x = rownames(rna_seurat@assays[["RNA"]]), value = TRUE)
+percent.mito <- Matrix::colSums(rna_seurat@assays[["RNA"]][mito.rnagenes, ])/Matrix::colSums(rna_seurat@assays[["RNA"]])
+rna_seurat <- AddMetaData(object = rna_seurat, metadata = percent.mito, col.name = "percent.mito")
+rna_seurat <- subset(x = rna_seurat, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mito >  -Inf & percent.mito < 0.05 )
+
+mito.crogenes <- grep(pattern = "^MT-", x = rownames(chromatin_seurat@assays[["RNA"]]), value = TRUE)
+percent.mito <- Matrix::colSums(chromatin_seurat@assays[["RNA"]][mito.crogenes, ])/Matrix::colSums(chromatin_seurat@assays[["RNA"]])
+chromatin_seurat <- AddMetaData(object = chromatin_seurat, metadata = percent.mito, col.name = "percent.mito")
+chromatin_seurat <- subset(x = chromatin_seurat, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mito >  -Inf & percent.mito < 0.05 )
+
+```
+
+```{r}
+
+rna_seurat <- NormalizeData(object = rna_seurat, normalization.method = "LogNormalize", scale.factor = 10000)
+
+chromatin_seurat <- NormalizeData(object = chromatin_seurat, normalization.method = "LogNormalize", scale.factor = 10000)
+
+
+```
+
+```{r}
+rna_seurat <- FindVariableFeatures(object = rna_seurat, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5, nfeatures = 2000)
+
+chromatin_seurat <- FindVariableFeatures(object = chromatin_seurat, mean.function = ExpMean, dispersion.function = LogVMR, x.low.cutoff = 0.0125, x.high.cutoff = 3, y.cutoff = 0.5, nfeatures = 2000)
+```
+
+
+```{r}
+rna_seurat <- ScaleData(object = rna_seurat, vars.to.regress = c("nCounts_RNA", "percent.mito"))
+
+
+chromatin_seurat <- ScaleData(object = chromatin_seurat, vars.to.regress = c("nCounts_RNA", "percent.mito"))
+
+
+rna_seurat <- FindVariableFeatures(rna_seurat, nFeatures = 3000)
+
+
+
+chromatin_seurat <- FindVariableFeatures(chromatin_seurat, nFeatures = 3000)
+```
+
+
+
+# genes.use = Reduce(intersect, list(colnames(rna_seurat),
+#                                    colnames(chromatin_seurat)))
+#   genes.use        
+
+# genes.use = Reduce(intersect, list(rna_seurat,chromatin_seurat))
+# genes.use
+```{r}
+genes.use = Reduce(intersect, list(VariableFeatures(rna_seurat),
+                                   VariableFeatures(chromatin_seurat),
+                                   rownames(rna_seurat),
+                                   rownames(chromatin_seurat)))
+
+
+
+
+RNASCE <- SingleCellExperiment(
+    assays = list(counts = rna_seurat@assays$RNA@counts[genes.use,],
+                  logcounts  = rna_seurat@assays$RNA@data[genes.use,],
+                  scale.data = rna_seurat@assays$RNA@scale.data[genes.use,]),
+    colData = rna_seurat@meta.data
+)
+
+ChroSCE <- SingleCellExperiment(
+  assays = list(counts = chromatin_seurat@assays$RNA@counts[genes.use,],
+                logcounts  = chromatin_seurat@assays$RNA@data[genes.use,],
+                scale.data = chromatin_seurat@assays$RNA@scale.data[genes.use,]),
+  colData = chromatin_seurat@meta.data
+)
+
+rna_seurat@meta.data
+
+chromatin_seurat@meta.data
+```
+
+```{r}
+
+RNASCE@colData$percent.mito
+
+ChroSCE@colData$percent.mito
+
+```
+
+
+```{r}
+scAlignHSC = scAlignCreateObject(sce.objects = list("YOUNG"=RNASCE, "OLD"=ChroSCE),
+                                  labels = list(RNASCE@colData$nFeature_RNA, ChroSCE@colData$nFeature_RNA),
+                                 data.use="scale.data")
+```
+
+
+
+```{r}
+working.dir = "." #where our data file, kowalcyzk_gene_counts.rda is located
+results.dir = "." #where the output should be stored
+scAlignHSC = scAlign(scAlignHSC,
+                    options=scAlignOptions(steps=5000, log.every=5000, norm=TRUE, early.stop=FALSE, architecture="small"),
+                    encoder.data="scale.data",
+                    supervised='both',
+                    run.encoder=TRUE,
+                    log.dir=file.path(results.dir, 'models','gene_input'),
+                    device="CPU")
+```
+
+
+
+```{r}
+gene_plot = PlotTSNE(scAlignHSC,
+                     "ALIGNED-GENE",
+                     title="scAlign-Gene",
+                     perplexity=30)
+gene_plot
+```
+
